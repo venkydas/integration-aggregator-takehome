@@ -1,0 +1,6 @@
+apiVersion: v2
+name: aggregator
+description: Hands out users' OAuth access tokens; OpenBao + oauthapp do the OAuth.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

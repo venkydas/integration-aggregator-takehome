@@ -32,6 +32,7 @@ htmlcov/
 
 # --- Build / reports ---
 dist/
+.build/
 charts/*/charts/
 charts/*.tgz
 perf-report.*

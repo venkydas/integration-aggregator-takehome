@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "aggregator.labels" . | nindent 4 }}
+spec:
+  # Fixed at one: OAuth state and token requests live in process memory, so a
+  # second replica would miss callbacks and polls meant for the first.
+  # See DESIGN.md for what it would take to scale out.
+  replicas: 1
+  # Recreate, not RollingUpdate, so two pods never serve at the same time.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "aggregator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aggregator.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: aggregator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: AGG_PUBLIC_URL
+              value: {{ .Values.publicUrl | quote }}
+            - name: AGG_BAO_ADDR
+              value: {{ .Values.bao.addr | quote }}
+            - name: AGG_BAO_MOUNT
+              value: {{ .Values.bao.mount | quote }}
+            - name: AGG_BAO_K8S_MOUNT
+              value: {{ .Values.bao.authMount | quote }}
+            - name: AGG_BAO_K8S_ROLE
+              value: {{ .Values.bao.role | quote }}
+            - name: AGG_WORKERS
+              value: {{ .Values.workers | quote }}
+            - name: AGG_QUEUE_SIZE
+              value: {{ .Values.queueSize | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            # Not ready until OpenBao is reachable and unsealed.
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
