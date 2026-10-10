@@ -1,0 +1,45 @@
+# Values for the official openbao/openbao chart.
+# Single standalone server with persistent storage; the image tag/registry is
+# set from the Makefile so local builds and ghcr images use the same file.
+
+injector:
+  enabled: false
+
+server:
+  image:
+    pullPolicy: IfNotPresent
+
+  # Lets OpenBao call the TokenReview API to verify service-account JWTs
+  # presented by the aggregator (Kubernetes auth method).
+  authDelegator:
+    enabled: true
+
+  dataStorage:
+    size: 1Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  standalone:
+    enabled: true
+    config: |
+      ui = false
+      plugin_directory = "/openbao/plugins"
+
+      listener "tcp" {
+        address         = "[::]:8200"
+        cluster_address = "[::]:8201"
+        # TLS is terminated nowhere in this local setup; see DESIGN.md.
+        tls_disable     = 1
+      }
+
+      storage "pebbledb" {
+        path = "/openbao/data/pebbledb"
+      }
+
+ui:
+  enabled: false

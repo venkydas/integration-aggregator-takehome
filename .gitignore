@@ -1,0 +1,42 @@
+# --- Secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.secret
+*secret*.json
+*unseal*
+*root-token*
+*root_token*
+bao-init.json
+.bao-init/
+*.pem
+*.key
+
+# Terraform state can contain secrets
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!example.tfvars
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# --- Build / reports ---
+dist/
+charts/*/charts/
+charts/*.tgz
+perf-report.*
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
