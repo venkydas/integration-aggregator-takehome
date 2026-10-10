@@ -19,7 +19,7 @@ MINIKUBE_FLAGS ?= --driver=docker --cpus=2 --memory=4096
 APP_REF = $(or $(APP_IMAGE),$$(cat .build/aggregator.ref))
 BAO_REF = $(or $(BAO_IMAGE),$$(cat .build/openbao-oauthapp.ref))
 
-.PHONY: help up down cluster images openbao bootstrap mock app test lint smoke port-forward status
+.PHONY: help up down cluster images openbao bootstrap mock app test lint smoke perf port-forward status
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -70,6 +70,12 @@ lint: ## Lint and format check
 
 smoke: ## End-to-end test against the running stack
 	APP_NAMESPACE=$(APP_NS) bash scripts/smoke.sh
+
+PERF_ARGS ?=
+perf: ## Load test (needs `make smoke` first); writes perf-report.{md,json}
+	kubectl -n $(APP_NS) port-forward svc/aggregator 8080:8080 >/dev/null 2>&1 & pf=$$!; \
+	trap "kill $$pf" EXIT; \
+	uv run python scripts/perf.py --base-url http://localhost:8080 $(PERF_ARGS)
 
 port-forward: ## Expose the service on localhost:8080
 	kubectl -n $(APP_NS) port-forward svc/aggregator 8080:8080
