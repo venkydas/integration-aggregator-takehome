@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running pipeline.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.13.0"
+  HELM_VERSION: "v3.22.0"
+  MINIKUBE_VERSION: "v1.39.0"
+  CHART_BASE_VERSION: "0.1.0"
+
+jobs:
+  test:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - run: make lint
+      - run: make test
+
+  publish:
+    name: Publish images and chart to ghcr.io
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      app_image: ${{ steps.refs.outputs.app_image }}
+      bao_image: ${{ steps.refs.outputs.bao_image }}
+      chart: ${{ steps.refs.outputs.chart }}
+      chart_version: ${{ steps.refs.outputs.chart_version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compute references
+        id: refs
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"   # ghcr requires lowercase
+          sha="${GITHUB_SHA::12}"
+          echo "app_image=ghcr.io/$owner/aggregator:$sha" >> "$GITHUB_OUTPUT"
+          echo "bao_image=ghcr.io/$owner/openbao-oauthapp:$sha" >> "$GITHUB_OUTPUT"
+          echo "chart=oci://ghcr.io/$owner/charts/aggregator" >> "$GITHUB_OUTPUT"
+          echo "chart_registry=oci://ghcr.io/$owner/charts" >> "$GITHUB_OUTPUT"
+          # Semver pre-release, so every commit publishes a distinct chart version.
+          echo "chart_version=$CHART_BASE_VERSION-sha.$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push aggregator image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.refs.outputs.app_image }}
+          cache-from: type=gha,scope=aggregator
+          cache-to: type=gha,mode=max,scope=aggregator
+
+      - name: Build and push OpenBao + oauthapp image
+        uses: docker/build-push-action@v7
+        with:
+          context: openbao
+          push: true
+          tags: ${{ steps.refs.outputs.bao_image }}
+          cache-from: type=gha,scope=openbao
+          cache-to: type=gha,mode=max,scope=openbao
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Package and push Helm chart
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm package charts/aggregator \
+            --version "${{ steps.refs.outputs.chart_version }}" \
+            --app-version "${GITHUB_SHA::12}" \
+            --destination dist
+          helm push dist/aggregator-*.tgz "${{ steps.refs.outputs.chart_registry }}"
+
+  e2e:
+    name: Deploy on minikube, smoke test, perf test
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      APP_IMAGE: ${{ needs.publish.outputs.app_image }}
+      BAO_IMAGE: ${{ needs.publish.outputs.bao_image }}
+      CHART: ${{ needs.publish.outputs.chart }}
+      CHART_VERSION: ${{ needs.publish.outputs.chart_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install minikube
+        run: |
+          curl -fsSLo minikube "https://github.com/kubernetes/minikube/releases/download/${MINIKUBE_VERSION}/minikube-linux-amd64"
+          sudo install minikube /usr/local/bin/minikube && rm minikube
+
+      - name: Log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Start cluster and load published images
+        # Packages start private on ghcr, so pull with the job token and hand
+        # the images to minikube instead of relying on anonymous pulls.
+        run: |
+          make cluster
+          for img in "$APP_IMAGE" "$BAO_IMAGE"; do
+            docker pull -q "$img"
+            minikube image load "$img"
+          done
+
+      - name: make up (deploys the published chart)
+        run: make up
+
+      - name: make up again (must be a no-op)
+        run: |
+          before=$(kubectl get pods -A -o jsonpath='{.items[*].metadata.uid}')
+          make up
+          after=$(kubectl get pods -A -o jsonpath='{.items[*].metadata.uid}')
+          if [ "$before" != "$after" ]; then
+            echo "::error::second make up changed running pods"; exit 1
+          fi
+
+      - name: Smoke test
+        run: make smoke
+
+      - name: Performance test
+        run: make perf PERF_ARGS="--out perf"
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-report
+          path: perf/
+          if-no-files-found: warn
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl -n openbao logs openbao-0 --tail=100 || true
+          kubectl -n aggregator logs deploy/aggregator --tail=100 || true
+          kubectl -n mock-oauth2 logs deploy/mock-oauth2 --tail=50 || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -40 || true
