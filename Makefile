@@ -19,12 +19,12 @@ MINIKUBE_FLAGS ?= --driver=docker --cpus=2 --memory=4096
 APP_REF = $(or $(APP_IMAGE),$$(cat .build/aggregator.ref))
 BAO_REF = $(or $(BAO_IMAGE),$$(cat .build/openbao-oauthapp.ref))
 
-.PHONY: help up down cluster images openbao bootstrap app test lint port-forward status
+.PHONY: help up down cluster images openbao bootstrap mock app test lint smoke port-forward status
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
 
-up: cluster $(if $(APP_IMAGE),,images) openbao bootstrap app ## Create/update everything (idempotent)
+up: cluster $(if $(APP_IMAGE),,images) openbao bootstrap mock app ## Create/update everything (idempotent)
 
 down: ## Tear everything down (idempotent)
 	minikube delete
@@ -49,6 +49,10 @@ openbao: ## Install/upgrade OpenBao from its Helm chart
 bootstrap: ## Init, unseal and configure OpenBao
 	BAO_NAMESPACE=$(BAO_NS) APP_NAMESPACE=$(APP_NS) bash scripts/bootstrap-bao.sh
 
+mock: ## Deploy the mock OIDC provider used by the smoke test
+	kubectl apply -f deploy/mock-oauth2.yaml
+	kubectl -n mock-oauth2 rollout status deploy/mock-oauth2 --timeout=3m
+
 app: ## Install/upgrade the aggregator from its Helm chart
 	ref=$(APP_REF); \
 	helm upgrade --install aggregator $(CHART) $(if $(CHART_VERSION),--version $(CHART_VERSION)) \
@@ -63,6 +67,9 @@ test: ## Unit tests
 lint: ## Lint and format check
 	uv run ruff check .
 	uv run ruff format --check .
+
+smoke: ## End-to-end test against the running stack
+	APP_NAMESPACE=$(APP_NS) bash scripts/smoke.sh
 
 port-forward: ## Expose the service on localhost:8080
 	kubectl -n $(APP_NS) port-forward svc/aggregator 8080:8080
