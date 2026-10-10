@@ -100,7 +100,7 @@ bao_root write auth/kubernetes/config kubernetes_host=https://kubernetes.default
 
 # Least privilege: the service can manage providers and credentials under
 # oauth2/, but cannot read anything else and cannot change OpenBao itself.
-kubectl -n "$NS" exec -i "$POD" -- sh -c 'cat > /tmp/aggregator.hcl' <<'EOF'
+POLICY='
 path "oauth2/servers/*" {
   capabilities = ["create", "update", "read"]
 }
@@ -109,8 +109,10 @@ path "oauth2/auth-code-url" {
 }
 path "oauth2/creds/*" {
   capabilities = ["create", "update", "read"]
-}
-EOF
+}'
+# The policy is not secret, so it travels as an argument: piping a file through
+# `kubectl exec -i` can arrive empty when the remote command exits right away.
+kubectl -n "$NS" exec "$POD" -- sh -c 'printf "%s\n" "$1" > /tmp/aggregator.hcl' -- "$POLICY"
 bao_root policy write aggregator /tmp/aggregator.hcl >/dev/null
 
 bao_root write auth/kubernetes/role/aggregator \
