@@ -23,7 +23,8 @@ The work is split three ways:
   - minikube
   - the official OpenBao chart with a custom image, because the plugin has no
     release binaries and is built from a pinned commit
-  - `bootstrap-bao.sh`, where every step checks state first
+  - `bootstrap-bao.sh`, which initialises and unseals OpenBao (checking state first)
+  - Terraform (`terraform/`), which declares the rest of OpenBao's configuration
   - the aggregator chart
 
 ## Decisions
@@ -45,6 +46,17 @@ The work is split three ways:
 - **Reproducible deploys.** Local images are tagged by a hash of their inputs, so
   unchanged code means no build, no image load and no rollout. CI verifies that a
   second `make up` leaves every pod untouched.
+- **OpenBao configuration as code.** Terraform declares the plugin, the `oauth2/`
+  mount, Kubernetes auth, the policy and the role. Initialise and unseal stay in a
+  script, because Terraform needs an unsealed OpenBao and a token before it can do
+  anything.
+  - **State** lives in a Secret inside the cluster (the `kubernetes` backend), so it
+    is created and destroyed with the cluster and never goes stale.
+  - **Drift.** `make drift` (`terraform plan -detailed-exitcode`) catches manual
+    changes, and CI requires it to be clean. A hand-widened policy is reported and
+    then reverted by `make up` (tested).
+  - **Known gap.** Upgrading the plugin binary needs a `plugin reload`, which
+    Terraform does not perform.
 
 ## Running more than one replica
 

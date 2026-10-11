@@ -16,6 +16,7 @@ env:
   UV_VERSION: "0.13.0"
   HELM_VERSION: "v3.22.0"
   MINIKUBE_VERSION: "v1.39.0"
+  TERRAFORM_VERSION: "1.16.5"
   CHART_BASE_VERSION: "0.1.0"
 
 jobs:
@@ -118,6 +119,17 @@ jobs:
       - uses: azure/setup-helm@v5
         with:
           version: ${{ env.HELM_VERSION }}
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          # The wrapper rewrites stdout/exit codes; we rely on plan's exit code.
+          terraform_wrapper: false
+
+      - name: Terraform format and validate
+        run: |
+          terraform -chdir=terraform fmt -check -diff
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform validate
 
       - name: Install minikube
         run: |
@@ -152,6 +164,9 @@ jobs:
           if [ "$before" != "$after" ]; then
             echo "::error::second make up changed running pods"; exit 1
           fi
+
+      - name: OpenBao configuration has no drift from terraform/
+        run: make drift
 
       - name: Smoke test
         run: make smoke
