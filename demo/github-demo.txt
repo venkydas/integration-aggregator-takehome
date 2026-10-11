@@ -1,0 +1,59 @@
+
+== Integration aggregator demo against real GitHub — 2026-10-11 16:01 UTC
+commit 0ea03e5; service at http://localhost:8080
+  aggregator/aggregator-58fc9d4649-np4xl  Running
+  openbao/openbao-0  Running
+
+== 1. Register GitHub as a provider (the secret goes to OpenBao only)
+$ curl -X POST http://localhost:8080/providers -d '{"name":"github","provider":"github","client_id":"Ov23liDMCs2F9DxLzLqY","client_secret":"<from .env, not shown>"}'
+{
+  "name": "github",
+  "provider": "github"
+}
+
+== 2. Connect user 'demo-user': get the GitHub authorization URL
+$ curl -X POST http://localhost:8080/providers/github/users/demo-user/connect
+https://github.com/login/oauth/authorize?client_id=Ov23liDMCs2F9DxLzLqY&redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback&response_type=code&scope=read%3Auser&state=O9JoGGVIIXw5sQ-sxpXY95SLZ8nLVdNz5F39HYSGy8I
+
+Opening it in your browser — approve the app on GitHub.
+GitHub then redirects the browser to http://localhost:8080/callback, where OpenBao exchanges the code.
+(if no browser window opened, copy the URL above into one)
+Press Enter once the browser shows {"status":"connected",...} 
+== 3. Ask for the token: 202 + Location, then poll
+$ curl -i http://localhost:8080/github/demo-user
+HTTP/1.1 202 Accepted
+location: /requests/Kx_azS1Y3qyS9m8MHTj3gg
+$ curl http://localhost:8080/requests/Kx_azS1Y3qyS9m8MHTj3gg
+{
+  "id": "Kx_azS1Y3qyS9m8MHTj3gg",
+  "status": "done",
+  "provider": "github",
+  "user": "demo-user",
+  "access_token": "gho_…GN (40 chars)",
+  "token_type": "Bearer",
+  "expire_time": "2026-10-12T00:03:18.609239061Z",
+  "error_code": null,
+  "error": null
+}
+
+== 4. Prove the token is real: call the GitHub API with it
+$ curl -H 'Authorization: Bearer <token>' https://api.github.com/user
+{
+  "login": "venkydas",
+  "id": 128781554,
+  "html_url": "https://github.com/venkydas"
+}
+
+== 5. Ask again: same token, served by OpenBao without a new login
+same token: gho_…GN (40 chars)
+
+== 6. The service never stores tokens itself
+Tokens live only in OpenBao (oauth2/creds/github/demo-user); the service keeps
+request results in memory for 5 minutes. A user who never connected:
+{
+  "status": "failed",
+  "error_code": "not_connected",
+  "error": "user 'nobody' has not connected 'github'"
+}
+
+== Done — transcript saved to demo/github-demo.txt

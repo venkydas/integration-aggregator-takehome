@@ -12,6 +12,7 @@ It implements no OAuth itself and stores no secrets or tokens.
 
 - [DESIGN.md](DESIGN.md): architecture, decisions, multi-replica limits, security
 - [PERF.md](PERF.md): load-test results and bottleneck analysis
+- [demo/github-demo.txt](demo/github-demo.txt): transcript of the full flow against real GitHub
 - [ASSIGNMENT.md](ASSIGNMENT.md): the original problem statement
 
 ## Quick start
@@ -43,10 +44,29 @@ For local development, `make test` runs the unit tests and `make lint` runs ruff
 | `GET` | `/requests/{id}` | Poll for the result: `pending`, `done` (with `access_token`) or `failed`. |
 | `GET` | `/healthz`, `/readyz` | Liveness, and readiness (OpenBao reachable and unsealed). |
 
-### Example with real GitHub
+### Real-provider demo
 
-Create a GitHub OAuth App with the callback URL `http://localhost:8080/callback`, then
-run `make up` and `make port-forward`:
+[`demo/github-demo.txt`](demo/github-demo.txt) is a transcript of all three flows
+against real GitHub:
+
+1. Register the provider.
+2. Connect a user and approve the app in a browser.
+3. Request the token (202, then poll) and receive a `gho_…` token.
+4. Call the GitHub API with that token to show it is genuine.
+
+To reproduce it, create a GitHub OAuth App with the callback URL
+`http://localhost:8080/callback`. Put its credentials in `.env` (git-ignored) as
+`GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then run:
+
+```bash
+make up && bash scripts/demo.sh
+```
+
+The script never prints the client secret and masks tokens in the transcript.
+
+### Example with real GitHub (by hand)
+
+With the same OAuth App, run `make up` and `make port-forward`, then:
 
 ```bash
 # 1. Register the provider; the secret is stored in OpenBao and never returned.
@@ -78,7 +98,8 @@ tests/                  unit tests (OpenBao mocked with respx)
 openbao/Dockerfile      OpenBao image with the oauthapp plugin built from source
 charts/aggregator/      Helm chart for the service
 deploy/                 OpenBao chart values; mock OIDC provider for the smoke test
-scripts/                bootstrap-bao.sh, build-images.sh, smoke.sh, perf.py
+scripts/                bootstrap-bao.sh, build-images.sh, smoke.sh, perf.py, demo.sh
+demo/                   transcript of the real-GitHub run
 .github/workflows/      CI: test -> publish to ghcr.io -> minikube e2e + perf
 ```
 
