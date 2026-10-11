@@ -19,12 +19,12 @@ MINIKUBE_FLAGS ?= --driver=docker --cpus=2 --memory=4096
 APP_REF = $(or $(APP_IMAGE),$$(cat .build/aggregator.ref))
 BAO_REF = $(or $(BAO_IMAGE),$$(cat .build/openbao-oauthapp.ref))
 
-.PHONY: help up down cluster images openbao bootstrap mock app test lint smoke perf port-forward status
+.PHONY: help up down cluster images openbao bootstrap configure drift mock app test lint smoke perf port-forward status
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
 
-up: cluster $(if $(APP_IMAGE),,images) openbao bootstrap mock app ## Create/update everything (idempotent)
+up: cluster $(if $(APP_IMAGE),,images) openbao bootstrap configure mock app ## Create/update everything (idempotent)
 
 down: ## Tear everything down (idempotent)
 	minikube delete
@@ -46,8 +46,14 @@ openbao: ## Install/upgrade OpenBao from its Helm chart
 	  --set server.image.repository=$$(r=$${ref#*/}; echo $${r%:*}) \
 	  --set server.image.tag=$${ref##*:}
 
-bootstrap: ## Init, unseal and configure OpenBao
-	BAO_NAMESPACE=$(BAO_NS) APP_NAMESPACE=$(APP_NS) bash scripts/bootstrap-bao.sh
+bootstrap: ## Initialise and unseal OpenBao
+	BAO_NAMESPACE=$(BAO_NS) bash scripts/bootstrap-bao.sh
+
+configure: ## Configure OpenBao from terraform/ (plugin, mount, auth, policy)
+	BAO_NAMESPACE=$(BAO_NS) bash scripts/terraform.sh apply
+
+drift: ## Exit 0 if OpenBao matches terraform/, 2 if it drifted
+	BAO_NAMESPACE=$(BAO_NS) bash scripts/terraform.sh plan
 
 mock: ## Deploy the mock OIDC provider used by the smoke test
 	kubectl apply -f deploy/mock-oauth2.yaml

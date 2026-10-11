@@ -17,18 +17,27 @@ It implements no OAuth itself and stores no secrets or tokens.
 
 ## Quick start
 
-Requirements: Docker, minikube, kubectl, helm, [uv](https://docs.astral.sh/uv/), make, jq.
+Requirements: Docker, minikube, kubectl, helm, terraform,
+[uv](https://docs.astral.sh/uv/), make, jq.
 
 ```bash
 make up      # minikube + OpenBao (+plugin) + mock OIDC provider + the service; idempotent
 make smoke   # end-to-end: register, connect, login, callback, async token
 make perf    # load test at concurrency 10/50/100 -> perf-report.md
+make drift   # exit 0 if OpenBao still matches terraform/, 2 if someone changed it
 make down    # delete everything
 ```
 
-`make up` builds both images locally, tagged by a hash of their inputs, and deploys
-everything from Helm charts. Running it a second time changes nothing. In CI the same
-target deploys the images and chart published to ghcr.io instead.
+`make up` does four things:
+
+1. Builds both images locally, tagged by a hash of their inputs.
+2. Deploys OpenBao from its Helm chart.
+3. Initialises and unseals OpenBao (`scripts/bootstrap-bao.sh`).
+4. Configures OpenBao with **Terraform** (`terraform/`: plugin, mount, Kubernetes
+   auth, policy, role), then deploys the service from its Helm chart.
+
+Running it a second time changes nothing. In CI the same target deploys the images
+and chart published to ghcr.io instead.
 
 For local development, `make test` runs the unit tests and `make lint` runs ruff.
 `make port-forward` exposes the service on `localhost:8080`.
@@ -97,8 +106,10 @@ app/                    FastAPI service: routes, OpenBao client, worker, in-memo
 tests/                  unit tests (OpenBao mocked with respx)
 openbao/Dockerfile      OpenBao image with the oauthapp plugin built from source
 charts/aggregator/      Helm chart for the service
+terraform/              OpenBao configuration: plugin, oauth2/ mount, k8s auth, policy, role
 deploy/                 OpenBao chart values; mock OIDC provider for the smoke test
-scripts/                bootstrap-bao.sh, build-images.sh, smoke.sh, perf.py, demo.sh
+scripts/                bootstrap-bao.sh (init/unseal), terraform.sh, build-images.sh,
+                        smoke.sh, perf.py, demo.sh
 demo/                   transcript of the real-GitHub run
 .github/workflows/      CI: test -> publish to ghcr.io -> minikube e2e + perf
 ```
@@ -109,7 +120,9 @@ On every push, [`ci.yml`](.github/workflows/ci.yml):
 
 1. Runs lint and unit tests.
 2. Builds and pushes both images and the Helm chart to `ghcr.io/venkydas`.
-3. Starts minikube and runs `make up` from the published artifacts.
-4. Checks that a second `make up` changes no pods.
-5. Runs `make smoke` and `make perf`, and uploads the perf report as the
+3. Checks `terraform fmt` and `terraform validate`.
+4. Starts minikube and runs `make up` from the published artifacts.
+5. Checks that a second `make up` changes no pods, and that `make drift` finds no
+   difference between OpenBao and `terraform/`.
+6. Runs `make smoke` and `make perf`, and uploads the perf report as the
    `perf-report` artifact.
